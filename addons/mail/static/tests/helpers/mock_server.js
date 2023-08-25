@@ -63,10 +63,16 @@ patch(MockServer.prototype, 'mail', {
     async _performRPC(route, args) {
         // routes
         if (route === '/mail/message/post') {
-            if (args.thread_model === 'mail.channel') {
-                return this._mockMailChannelMessagePost(args.thread_id, args.post_data, args.context);
+            const finalData = {};
+            for (const allowedField of ['attachment_ids', 'body', 'message_type', 'partner_ids', 'subtype_xmlid', 'parent_id']) {
+                if (args.post_data[allowedField] !== undefined) {
+                    finalData[allowedField] = args.post_data[allowedField];
+                }
             }
-            return this._mockMailThreadMessagePost(args.thread_model, [args.thread_id], args.post_data, args.context);
+            if (args.thread_model === 'mail.channel') {
+                return this._mockMailChannelMessagePost(args.thread_id, finalData, args.context);
+            }
+            return this._mockMailThreadMessagePost(args.thread_model, [args.thread_id], finalData, args.context);
         }
         if (route === '/mail/attachment/delete') {
             const { attachment_id } = args;
@@ -540,6 +546,7 @@ patch(MockServer.prototype, 'mail', {
             res['hasReadAccess'] = false;
             return res;
         }
+        res['canPostOnReadonly'] = thread_model === 'mail.channel'; // model that have attr _mail_post_access='read'
         if (request_list.includes('activities')) {
             const activities = this.pyEnv['mail.activity'].searchRead([['id', 'in', thread.activity_ids || []]]);
             res['activities'] = this._mockMailActivityActivityFormat(activities.map(activity => activity.id));

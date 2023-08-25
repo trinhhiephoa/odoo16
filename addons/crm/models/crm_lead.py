@@ -560,11 +560,11 @@ class Lead(models.Model):
                 duplicate_lead_ids |= return_if_relevant('crm.lead', common_lead_domain + [
                     '|', ('email_normalized', 'ilike', email_search), ('email_from', 'ilike', email_search)
                 ])
-            if lead.partner_name and len(lead.partner_name) >= MIN_NAME_LENGTH:
+            if lead.partner_name and len(lead.partner_name.strip()) >= MIN_NAME_LENGTH:
                 duplicate_lead_ids |= return_if_relevant('crm.lead', common_lead_domain + [
                     ('partner_name', 'ilike', lead.partner_name)
                 ])
-            if lead.contact_name and len(lead.contact_name) >= MIN_NAME_LENGTH:
+            if lead.contact_name and len(lead.contact_name.strip()) >= MIN_NAME_LENGTH:
                 duplicate_lead_ids |= return_if_relevant('crm.lead', common_lead_domain + [
                     ('contact_name', 'ilike', lead.contact_name)
                 ])
@@ -572,11 +572,11 @@ class Lead(models.Model):
                 duplicate_lead_ids |= lead.with_context(active_test=False).search(common_lead_domain + [
                     ("partner_id", "child_of", lead.partner_id.commercial_partner_id.id)
                 ])
-            if lead.phone and len(lead.phone) >= MIN_PHONE_LENGTH:
+            if lead.phone and len(lead.phone.strip()) >= MIN_PHONE_LENGTH:
                 duplicate_lead_ids |= return_if_relevant('crm.lead', common_lead_domain + [
                     ('phone_mobile_search', 'ilike', lead.phone)
                 ])
-            if lead.mobile and len(lead.mobile) >= MIN_PHONE_LENGTH:
+            if lead.mobile and len(lead.mobile.strip()) >= MIN_PHONE_LENGTH:
                 duplicate_lead_ids |= return_if_relevant('crm.lead', common_lead_domain + [
                     ('phone_mobile_search', 'ilike', lead.mobile)
                 ])
@@ -1250,7 +1250,7 @@ class Lead(models.Model):
         if alias_record and alias_record.alias_domain and alias_record.alias_name:
             email = '%s@%s' % (alias_record.alias_name, alias_record.alias_domain)
             email_link = "<b><a href='mailto:%s'>%s</a></b>" % (email, email)
-            sub_title = _('Use the top left <i>Create</i> button, or send an email to %s to test the email gateway.') % (email_link)
+            sub_title = _('Use the <i>New</i> button, or send an email to %s to test the email gateway.') % (email_link)
         return '<p class="o_view_nocontent_smiling_face">%s</p><p class="oe_view_nocontent_alias">%s</p>' % (help_title, sub_title)
 
     # ------------------------------------------------------------
@@ -2157,7 +2157,8 @@ class Lead(models.Model):
                     s_lead_lost *= value_result['lost'] / total_lost
 
             # 3. Compute Probability to win
-            lead_probabilities[lead_id] = round(100 * s_lead_won / (s_lead_won + s_lead_lost), 2)
+            probability = s_lead_won / (s_lead_won + s_lead_lost)
+            lead_probabilities[lead_id] = min(max(round(100 * probability, 2), 0.01), 99.99)
         return lead_probabilities
 
     # ---------------------------------

@@ -7,7 +7,7 @@ import logging
 import requests
 from werkzeug.urls import url_quote
 from base64 import b64encode
-from urllib3.util.ssl_ import create_urllib3_context
+from odoo.addons.account.tools import LegacyHTTPAdapter
 
 from odoo import api, models, _
 from odoo.tools.float_utils import json_float_round
@@ -18,28 +18,19 @@ _logger = logging.getLogger(__name__)
 ETA_DOMAINS = {
     'preproduction': 'https://api.preprod.invoicing.eta.gov.eg',
     'production': 'https://api.invoicing.eta.gov.eg',
+    'invoice.preproduction': 'https://preprod.invoicing.eta.gov.eg/',
+    'invoice.production': 'https://invoicing.eta.gov.eg',
     'token.preproduction': 'https://id.preprod.eta.gov.eg',
     'token.production': 'https://id.eta.gov.eg',
 }
 
 
-class L10nEgHTTPAdapter(requests.adapters.HTTPAdapter):
-    """ An adapter to allow unsafe legacy renegotiation necessary to connect to
-    gravely outdated ETA production servers.
-    """
-
-    def init_poolmanager(self, *args, **kwargs):
-        # This is not defined before Python 3.12
-        # cfr. https://github.com/python/cpython/pull/93927
-        # Origin: https://github.com/openssl/openssl/commit/ef51b4b9
-        OP_LEGACY_SERVER_CONNECT = 0x04
-        context = create_urllib3_context(options=OP_LEGACY_SERVER_CONNECT)
-        kwargs["ssl_context"] = context
-        return super().init_poolmanager(*args, **kwargs)
-
-
 class AccountEdiFormat(models.Model):
     _inherit = 'account.edi.format'
+
+    @api.model
+    def _l10n_eg_get_eta_qr_domain(self, production_enviroment=False):
+        return production_enviroment and ETA_DOMAINS['invoice.production'] or ETA_DOMAINS['invoice.preproduction']
 
     @api.model
     def _l10n_eg_get_eta_api_domain(self, production_enviroment=False):
@@ -55,7 +46,7 @@ class AccountEdiFormat(models.Model):
         request_url = api_domain + request_url
         try:
             session = requests.session()
-            session.mount("https://", L10nEgHTTPAdapter())
+            session.mount("https://", LegacyHTTPAdapter())
             request_response = session.request(method, request_url, data=request_data.get('body'), headers=request_data.get('header'), timeout=(5, 10))
         except (ValueError, requests.exceptions.ConnectionError, requests.exceptions.MissingSchema, requests.exceptions.Timeout, requests.exceptions.HTTPError) as ex:
             return {

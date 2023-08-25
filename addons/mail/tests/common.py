@@ -267,7 +267,13 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
             if mail.id == mail_id:
                 break
         else:
-            raise AssertionError('mail.mail not found for ID %s' % (mail_id))
+            debug_info = '\n'.join(
+                f'From: {mail.author_id} ({mail.email_from}) - ID {mail.id} (State: {mail.state})'
+                for mail in filtered
+            )
+            raise AssertionError(
+                f'mail.mail not found for ID {mail_id} / message {mail_message} / status {status} / author {author}\n{debug_info}'
+            )
         return mail
 
     def _find_mail_mail_wpartners(self, recipients, status, mail_message=None, author=None):
@@ -285,7 +291,14 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
             if all(p in mail.recipient_ids for p in recipients):
                 break
         else:
-            raise AssertionError('mail.mail not found for message %s / status %s / recipients %s / author %s' % (mail_message, status, recipients.ids, author))
+            debug_info = '\n'.join(
+                f'From: {mail.author_id} ({mail.email_from}) - To: {sorted(mail.recipient_ids.ids)} (State: {mail.state})'
+                for mail in filtered
+            )
+            recipients_info = f'Missing: {[r.name for r in recipients if r.id not in filtered.recipient_ids.ids]}'
+            raise AssertionError(
+                f'mail.mail not found for message {mail_message} / status {status} / recipients {sorted(recipients.ids)} / author {author}\n{recipients_info}\n{debug_info}'
+            )
         return mail
 
     def _find_mail_mail_wemail(self, email_to, status, mail_message=None, author=None):
@@ -303,7 +316,13 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
             if (mail.email_to == email_to and not mail.recipient_ids) or (not mail.email_to and mail.recipient_ids.email == email_to):
                 break
         else:
-            raise AssertionError('mail.mail not found for email_to %s / status %s in %s' % (email_to, status, repr([m.email_to for m in self._new_mails])))
+            debug_info = '\n'.join(
+                f'From: {mail.author_id} ({mail.email_from}) - To: {mail.email_to} / {sorted(mail.recipient_ids.mapped("email"))} (State: {mail.state})'
+                for mail in filtered
+            )
+            raise AssertionError(
+                f'mail.mail not found for message {mail_message} / status {status} / email_to {email_to} / author {author}\n{debug_info}'
+            )
         return mail
 
     def _find_mail_mail_wrecord(self, record, status=None, mail_message=None, author=None):
@@ -316,15 +335,38 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
             if mail.model == record._name and mail.res_id == record.id:
                 break
         else:
-            raise AssertionError('mail.mail not found for record %s in %s' % (record, repr([m.email_to for m in self._new_mails])))
+            debug_info = '\n'.join(
+                f'From: {mail.author_id} ({mail.email_from}) - Model{mail.model} / ResId {mail.res_id} (State: {mail.state})'
+                for mail in filtered
+            )
+            raise AssertionError(
+                f'mail.mail not found for message {mail_message} / status {status} / record {record.model}, {record.id} / author {author}\n{debug_info}'
+            )
         return mail
+
+    def _find_sent_email(self, email_from, emails_to, subject=None):
+        """ Find an outgoing email based on from / to and optional subject when
+        having a conflict.
+
+        :return sent_email: an outgoing email generated during the mock;
+        """
+        sent_emails = [
+            mail for mail in self._mails
+            if set(mail['email_to']) == set(emails_to) and mail['email_from'] == email_from
+        ]
+        if len(sent_emails) > 1 and subject:
+            # try to better filter
+            sent_email = next((mail for mail in sent_emails if mail['subject'] == subject), False)
+        else:
+            sent_email = sent_emails[0] if sent_emails else False
+        return sent_email
 
     # ------------------------------------------------------------
     # GATEWAY ASSERTS
     # ------------------------------------------------------------
 
-    def _assertMailMail(self, mail, recipients_list,
-                        status, author=None,
+    def _assertMailMail(self, mail, recipients_list, status,
+                        email_to_recipients=None, author=None,
                         content=None, fields_values=None, email_values=None):
         """ Assert mail.mail record values and maybe related emails. Allow
         asserting their content. Records to check are the one generated when
@@ -336,6 +378,9 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
           ``_find_mail_mail_wemail``);
         :param status: mail.mail state used to filter mails. If ``sent`` this method
           also check that emails have been sent trough gateway;
+        :param email_to_recipients: used for assertSentEmail to find email based
+          on 'email_to' when doing the match directly based on recipients_list
+          being partners it nos easy (e.g. multi emails, ...);
         :param author: see ``_find_mail_mail_wpartners``;
         :param content: if given, check it is contained within mail html body;
         :param fields_values: if given, should be a dictionary of field names /
@@ -355,15 +400,20 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
                     'Mail: expected %s for %s, got %s' % (fvalue, fname, mail[fname])
                 )
         if status == 'sent':
-            for recipient in recipients_list:
+            if email_to_recipients:
+                recipients = email_to_recipients  # already formatted
+            else:
+                recipients = [[r] for r in recipients_list]  # one partner -> list of a single email
+            for recipient in recipients:
                 with self.subTest(recipient=recipient):
                     self.assertSentEmail(
                         email_values['email_from'] if email_values and email_values.get('email_from') else author,
-                        [recipient],
+                        recipient,
                         **(email_values or {})
                     )
 
     def assertMailMail(self, recipients, status,
+                       email_to_recipients=None,
                        mail_message=None, author=None,
                        content=None, fields_values=None, email_values=None):
         """ Assert mail.mail records are created and maybe sent as emails. This
@@ -379,12 +429,15 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
         found_mail = self._find_mail_mail_wpartners(recipients, status, mail_message=mail_message, author=author)
         self.assertTrue(bool(found_mail))
         self._assertMailMail(
-            found_mail, recipients,
-            status, author=author,
-            content=content, fields_values=fields_values, email_values=email_values,
+            found_mail, recipients, status,
+            email_to_recipients=email_to_recipients,
+            author=author, content=content,
+            fields_values=fields_values, email_values=email_values,
         )
+        return found_mail
 
     def assertMailMailWEmails(self, emails, status,
+                              email_to_recipients=None,
                               mail_message=None, author=None,
                               content=None, fields_values=None, email_values=None):
         """ Assert mail.mail records are created and maybe sent as emails. This
@@ -396,16 +449,20 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
 
         See '_assertMailMail' for more details about other parameters.
         """
+        found_mail = False
         for email_to in emails:
             found_mail = self._find_mail_mail_wemail(email_to, status, mail_message=mail_message, author=author)
             self.assertTrue(bool(found_mail))
             self._assertMailMail(
-                found_mail, [email_to],
-                status, author=author,
-                content=content, fields_values=fields_values, email_values=email_values,
+                found_mail, [email_to], status,
+                email_to_recipients=email_to_recipients,
+                author=author, content=content,
+                fields_values=fields_values, email_values=email_values,
             )
+        return found_mail
 
     def assertMailMailWRecord(self, record, recipients, status,
+                              email_to_recipients=None,
                               mail_message=None, author=None,
                               content=None, fields_values=None, email_values=None):
         """ Assert mail.mail records are created and maybe sent as emails.  This
@@ -421,12 +478,15 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
         found_mail = self._find_mail_mail_wrecord(record, mail_message=mail_message, author=author)
         self.assertTrue(bool(found_mail))
         self._assertMailMail(
-            found_mail, recipients,
-            status, author=author,
-            content=content, fields_values=fields_values, email_values=email_values,
+            found_mail, recipients, status,
+            email_to_recipients=email_to_recipients,
+            author=author, content=content,
+            fields_values=fields_values, email_values=email_values,
         )
+        return found_mail
 
     def assertMailMailWId(self, mail_id, status,
+                          email_to_recipients=None,
                           author=None,
                           content=None, fields_values=None):
         """ Assert mail.mail records are created and maybe sent as emails. Allow
@@ -442,9 +502,12 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
         self.assertTrue(bool(found_mail))
         self._assertMailMail(
             found_mail, [],  # generally used when recipients are Falsy
-            status, author=author,
-            content=content, fields_values=fields_values,
+            status,
+            email_to_recipients=email_to_recipients,
+            author=author, content=content,
+            fields_values=fields_values,
         )
+        return found_mail
 
     def assertMessageFields(self, message, fields_values):
         """ Just a quick helper to check a mail.message content by giving directly
@@ -521,24 +584,23 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
         else:
             expected['email_from'] = author
 
-        email_to_list = []
-        for email_to in recipients:
-            if isinstance(email_to, self.env['res.partner'].__class__):
-                email_to_list.append(formataddr((email_to.name, email_to.email)))
-            else:
-                email_to_list.append(email_to)
+        if 'email_to' in values:
+            email_to_list = values['email_to']
+        else:
+            email_to_list = []
+            for email_to in recipients:
+                if isinstance(email_to, self.env['res.partner'].__class__):
+                    email_to_list.append(formataddr((email_to.name, email_to.email or 'False')))
+                else:
+                    email_to_list.append(email_to)
         expected['email_to'] = email_to_list
 
         # fetch mail
-        sent_mails = [
-            mail for mail in self._mails
-            if set(mail['email_to']) == set(expected['email_to']) and mail['email_from'] == expected['email_from']
-        ]
-        if len(sent_mails) > 1 and values.get('subject'):
-            # try to better filter
-            sent_mail = next((mail for mail in sent_mails if mail['subject'] == values['subject']), False)
-        else:
-            sent_mail = sent_mails[0] if sent_mails else False
+        sent_mail = self._find_sent_email(
+            expected['email_from'],
+            expected['email_to'],
+            values.get('subject'),
+        )
         debug_info = ''
         if not sent_mail:
             debug_info = '-'.join('From: %s-To: %s' % (mail['email_from'], mail['email_to']) for mail in self._mails)
@@ -559,7 +621,11 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
         if 'attachments_info' in expected:
             attachments = sent_mail['attachments']
             for attachment_info in expected['attachments_info']:
-                attachment = next(attach for attach in attachments if attach[0] == attachment_info['name'])
+                attachment = next((attach for attach in attachments if attach[0] == attachment_info['name']), False)
+                self.assertTrue(
+                    bool(attachment),
+                    f'Attachment {attachment_info["name"]} not found in attachments',
+                )
                 if attachment_info.get('raw'):
                     self.assertEqual(attachment[1], attachment_info['raw'])
                 if attachment_info.get('type'):
@@ -582,6 +648,8 @@ class MockEmail(common.BaseCase, MockSmtplibCase):
                     expected[val], sent_mail[val[:-8]],
                     'Value for %s: %s does not contain %s' % (val, sent_mail[val[:-8]], expected[val])
                 )
+
+        return sent_mail
 
 
 class MailCase(MockEmail):
@@ -899,9 +967,10 @@ class MailCase(MockEmail):
                 if not self.mail_unlink_sent:
                     self.assertMailMail(
                         partners, mail_status,
-                        author=message.author_id if message.author_id else message.email_from,
+                        author=message_info.get('fields_values', {}).get('author_id') or message.author_id or message.email_from,
                         mail_message=message,
                         email_values=email_values,
+                        fields_values=message_info.get('fields_values'),
                     )
                 else:
                     for recipient in partners:
@@ -1216,12 +1285,13 @@ class MailCommon(common.TransactionCase, MailCase):
         })
 
     @staticmethod
-    def _generate_attachments_data(count, res_model, res_id, attach_values=None):
+    def _generate_attachments_data(count, res_model, res_id, attach_values=None, prefix=None):
         # attachment visibility depends on what they are attached to
         attach_values = attach_values or {}
+        prefix = prefix or ''
         return [{
             'datas': base64.b64encode(b'AttContent_%02d' % x),
-            'name': 'AttFileName_%02d.txt' % x,
+            'name': f'{prefix}AttFileName_{x:02d}.txt',
             'mimetype': 'text/plain',
             'res_model': res_model,
             'res_id': res_id,

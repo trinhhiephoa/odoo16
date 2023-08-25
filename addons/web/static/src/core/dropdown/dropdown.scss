@@ -20,6 +20,14 @@
         cursor: pointer;
       }
     }
+
+    // Correctly align sub dropdowns items with its parent's
+    .o-dropdown > .o-dropdown--menu {
+      // the value comes from bootstrap's ".dropdown-menu" padding and border style
+      --o-dropdown--submenu-margin: calc(-.5rem - 1px);
+      margin-top: var(--o-dropdown--submenu-margin);
+      margin-bottom: var(--o-dropdown--submenu-margin);
+    }
   }
   /*!rtl:begin:ignore*/
   &.dropup > .o-dropdown--menu,
@@ -48,7 +56,7 @@
       outline: none;
       box-shadow: none !important;
     }
-    &.dropdown-item {
+    &.dropdown-item:not(.o_menu_item) {
       &::after, &::before {
         // Changes the placement of bootstrap dropdown carets for subdropdowns
         @include o-position-absolute($right: 0, $top: 0);

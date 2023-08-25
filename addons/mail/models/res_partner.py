@@ -40,15 +40,6 @@ class Partner(models.Model):
             WHERE R.res_partner_id = %s AND (R.is_read = false OR R.is_read IS NULL)""", (self.id,))
         return self.env.cr.dictfetchall()[0].get('needaction_count')
 
-    def _get_starred_count(self):
-        """ compute the number of starred of the current partner """
-        self.ensure_one()
-        self.env.cr.execute("""
-            SELECT count(*) as starred_count
-            FROM mail_message_res_partner_starred_rel R
-            WHERE R.res_partner_id = %s """, (self.id,))
-        return self.env.cr.dictfetchall()[0].get('starred_count')
-
     # ------------------------------------------------------------
     # MESSAGING
     # ------------------------------------------------------------
@@ -129,7 +120,7 @@ class Partner(models.Model):
                     "id": main_user.id,
                     "isInternalUser": not main_user.share,
                 } if main_user else [('clear',)]
-            if 'guest' in self.env.context:
+            if not self.env.user._is_internal():
                 data.pop('email', None)
             partners_format[partner] = data
         return partners_format
@@ -218,7 +209,11 @@ class Partner(models.Model):
             remaining_limit = limit - len(partners)
             if remaining_limit <= 0:
                 break
-            partners |= self.search(expression.AND([[('id', 'not in', partners.ids)], domain]), limit=remaining_limit)
+            # We are using _search to avoid the default order that is
+            # automatically added by the search method. "Order by" makes the query
+            # really slow.
+            query = self._search(expression.AND([[('id', 'not in', partners.ids)], domain]), limit=remaining_limit)
+            partners |= self.browse(query)
         partners_format = partners.mail_partner_format()
         if channel_id:
             member_by_partner = {member.partner_id: member for member in self.env['mail.channel.member'].search([('channel_id', '=', channel_id), ('partner_id', 'in', partners.ids)])}

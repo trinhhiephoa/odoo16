@@ -65,15 +65,17 @@ class HrContract(models.Model):
                 return self._get_leave_work_entry_type_dates(leave[2], interval_start, interval_stop, self.employee_id)
         return self.env.ref('hr_work_entry_contract.work_entry_type_leave')
 
+    def _get_sub_leave_domain(self):
+        return [('calendar_id', 'in', [False] + self.resource_calendar_id.ids)]
+
     def _get_leave_domain(self, start_dt, end_dt):
-        return [
-            ('time_type', '=', 'leave'),
-            ('calendar_id', 'in', [False] + self.resource_calendar_id.ids),
+        domain = [
             ('resource_id', 'in', [False] + self.employee_id.resource_id.ids),
             ('date_from', '<=', end_dt),
             ('date_to', '>=', start_dt),
             ('company_id', 'in', [False, self.company_id.id]),
         ]
+        return expression.AND([domain, self._get_sub_leave_domain()])
 
     def _get_attendance_intervals(self, start_dt, end_dt):
         # {resource: intervals}
@@ -356,8 +358,8 @@ class HrContract(models.Model):
         dependendant_fields = self._get_fields_that_recompute_we()
         if any(key in dependendant_fields for key in vals.keys()):
             for contract in self:
-                date_from = max(self.date_start, self.date_generated_from.date())
-                date_to = min(self.date_end or date.max, self.date_generated_to.date())
+                date_from = max(contract.date_start, contract.date_generated_from.date())
+                date_to = min(contract.date_end or date.max, contract.date_generated_to.date())
                 if date_from != date_to:
                     contract._recompute_work_entries(date_from, date_to)
         return result

@@ -58,7 +58,7 @@ class Survey(models.Model):
     title = fields.Char('Survey Title', required=True, translate=True)
     color = fields.Integer('Color Index', default=0)
     description = fields.Html(
-        "Description", translate=True, sanitize=False,  # TDE FIXME: find a way to authorize videos
+        "Description", translate=True, sanitize=True, sanitize_overridable=True,
         help="The description will be displayed on the home page of the survey. You can use this to give the purpose and guidelines to your candidates before they start it.")
     description_done = fields.Html(
         "End Message", translate=True,
@@ -374,13 +374,19 @@ class Survey(models.Model):
         if default and 'question_ids' in default:
             return clone
 
-        questions_map = {src.id: dst.id for src, dst in zip(self.question_ids, clone.question_ids)}
+        src_questions = self.question_ids
+        dst_questions = clone.question_ids.sorted()
+
+        questions_map = {src.id: dst.id for src, dst in zip(src_questions, dst_questions)}
         answers_map = {
-            source_answer.id: copy_answer.id
-            for source_answer, copy_answer
-            in zip(self.question_ids.suggested_answer_ids, clone.question_ids.suggested_answer_ids)
+            src_answer.id: dst_answer.id
+            for src, dst
+            in zip(src_questions, dst_questions)
+            for src_answer, dst_answer
+            in zip(src.suggested_answer_ids, dst.suggested_answer_ids.sorted())
         }
-        for src, dst in zip(self.question_ids, clone.question_ids):
+
+        for src, dst in zip(src_questions, dst_questions):
             if src.is_conditional:
                 dst.triggering_question_id = questions_map.get(src.triggering_question_id.id)
                 dst.triggering_answer_id = answers_map.get(src.triggering_answer_id.id)
@@ -972,7 +978,7 @@ class Survey(models.Model):
         return {
             'type': 'ir.actions.act_url',
             'name': "Test Survey",
-            'target': 'self',
+            'target': 'new',
             'url': '/survey/test/%s' % self.access_token,
         }
 
